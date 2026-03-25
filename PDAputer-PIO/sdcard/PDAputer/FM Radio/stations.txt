@@ -1,0 +1,6 @@
+# FM Radio Presets
+# Format: preset_number = frequency_mhz
+
+1 = 0.0
+2 = 0.0
+3 = 0.0

@@ -19,6 +19,8 @@ PDA-style interface for M5Stack Cardputer — ESP32-S3, LVGL, PlatformIO.
 
 ---
 
+![alt text](PDAputer-EEZ/preview.gif)
+
 ## Apps
 
 <details>
@@ -159,8 +161,6 @@ Save presets on device with `Fn+1`, `Fn+2`, `Fn+3`.
 
 
 ## Project Structure
-
-> ❗ <span style="color: red;">Update the source code as soon as possible. </span>
 
 
 - **PDAputer-PIO/** — PlatformIO firmware project (ESP32-S3)

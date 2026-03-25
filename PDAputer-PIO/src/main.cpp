@@ -1,6 +1,4 @@
 #include <Arduino.h>
-#include <array>
-#include <algorithm>
 
 #include <M5Cardputer.h>
 #include <lvgl.h>
@@ -10,6 +8,12 @@
 #include "app_manager/app_manager.h"
 #include "apps/boot/boot_app.h"
 #include "apps/main_menu/main_menu_app.h"
+#include "apps/fm_radio/fm_radio_app.h"
+#include "apps/music/music_app.h"
+#include "apps/settings/settings_app.h"
+#include "apps/calendar/calendar_app.h"
+#include <battery_manager.h>
+#include <keyboard_manager.h>
 
 // https://www.youtube.com/nishad2m8
 // https://buymeacoffee.com/nishad2m8
@@ -17,57 +21,11 @@
 AppManager appManager;
 BootApp bootApp(appManager);
 MainMenuApp mainMenuApp(appManager);
+FMRadioApp fmRadioApp(appManager);
+MusicApp musicApp(appManager);
+SettingsApp settingsApp(appManager);
+CalendarApp calendarApp(appManager);
 
-namespace {
-    std::array<bool, 256> s_prev_keymap{};
-
-    inline bool hasKeyPressed(const std::array<bool, 256>& map) {
-        return std::any_of(map.begin(), map.end(), [](bool v) { return v; });
-    }
-
-    void processKeyboardInput() {
-        auto& status = M5Cardputer.Keyboard.keysState();
-        auto& klist  = M5Cardputer.Keyboard.keyList();
-
-        std::array<bool, 256> current{};
-        auto markKey = [&](char key) {
-            if (key == 0) return;
-            current[static_cast<uint8_t>(key)] = true;
-        };
-
-        for (auto c : status.word) {
-            markKey(c);
-        }
-
-        if (!hasKeyPressed(current)) {
-            for (const auto& pos : klist) {
-                markKey((char)M5Cardputer.Keyboard.getKey(pos));
-            }
-        }
-
-        if (current != s_prev_keymap) {
-            size_t pressedCount = std::count(current.begin(), current.end(), true);
-            Serial.printf("[KB] pressed=%u word=%u raw=%u mods=0x%02X caps=%d\n",
-                          (unsigned)pressedCount,
-                          (unsigned)status.word.size(),
-                          (unsigned)klist.size(),
-                          status.modifiers,
-                          M5Cardputer.Keyboard.capslocked() ? 1 : 0);
-        }
-
-        for (size_t idx = 0; idx < current.size(); ++idx) {
-            if (current[idx] && !s_prev_keymap[idx]) {
-                char key = (char)idx;
-                Serial.printf("[KB] dispatch '%c' (0x%02X)\n",
-                              (key >= 32 && key < 127) ? key : '.',
-                              (uint8_t)key);
-                appManager.handleKey(key);
-            }
-        }
-
-        s_prev_keymap = current;
-    }
-} // namespace
 
 void setup() {
     Serial.begin(115200);
@@ -92,9 +50,33 @@ void setup() {
         return (uint32_t)millis();
     });
 
-    // Initialize app manager and start boot -> main menu
+    // Initialize app manager and wire up navigation
     appManager.init();
     bootApp.setNextApp(&mainMenuApp);
+
+    // Music: index 1
+    musicApp.setBackApp(&mainMenuApp);
+    mainMenuApp.setAppTarget(1, &musicApp);
+
+    // FM Radio: index 3
+    fmRadioApp.setBackApp(&mainMenuApp);
+    mainMenuApp.setAppTarget(3, &fmRadioApp);
+
+    // Calendar: index 8
+    calendarApp.setBackApp(&mainMenuApp);
+    mainMenuApp.setAppTarget(8, &calendarApp);
+
+    // Settings: index 10
+    settingsApp.setBackApp(&mainMenuApp);
+    mainMenuApp.setAppTarget(10, &settingsApp);
+
+    BatteryManager::begin();
+
+    // Keyboard manager — translates raw M5 keys to standard codes
+    KeyboardManager::begin([](char key) {
+        appManager.handleKey(key);
+    });
+
     appManager.startApp(&bootApp);
     Serial.println("[BOOT] AppManager started (boot -> main menu)");
 
@@ -105,7 +87,7 @@ void setup() {
 
 void loop() {
     M5Cardputer.update();
-    processKeyboardInput();
+    KeyboardManager::update();
 
     // Update app logic + LVGL rendering (single task, no mutex needed)
     appManager.update();

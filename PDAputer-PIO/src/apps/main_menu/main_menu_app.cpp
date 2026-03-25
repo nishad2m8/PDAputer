@@ -3,6 +3,12 @@
 #include <lvgl.h>
 #include <Arduino.h>
 #include <M5Cardputer.h>
+#include <battery_manager.h>
+#include <config_manager.h>
+#include <sd_manager.h>
+#include <wifi_manager.h>
+#include <time_manager.h>
+#include <images.h>
 
 using namespace smooth_ui_toolkit;
 
@@ -19,22 +25,25 @@ static const SlotPos SLOTS[] = {
     { 190, 135, 170 },  // [6] OFF_RIGHT
 };
 
-// Maps circular distance to slot index
-// raw: 0=center, 1=right1, 2=right2, 3..5=hidden, 6=left2, 7=left1
-static const int RAW_TO_SLOT[] = { 3, 4, 5, -1, -1, -1, 1, 2 };
+// Maps circular distance to slot index (11 apps)
+// raw: 0=center, 1=right1, 2=right2, 3..8=hidden, 9=left2, 10=left1
+static const int RAW_TO_SLOT[] = { 3, 4, 5, -1, -1, -1, -1, -1, -1, 1, 2 };
 
 // ============================================================
-// App definitions (order: setting, ai, fmradio, webradio, music, games, lorachat, gps)
+// App definitions
 // ============================================================
 static const AppDef APP_DEFS[] = {
-    { "Setting",   0xff002c2d, 0xff03ffee },
-    { "AI Chat",   0xff4f0f21, 0xffff9b9d },
-    { "FM Radio",  0xff2c1e00, 0xffffaa00 },
-    { "Web Radio", 0xff0a2800, 0xff2ef900 },
-    { "Music",     0xff002b4a, 0xff55b4ff },
-    { "Games",     0xff3a0830, 0xffff7acd },
-    { "LoRa Chat", 0xff282b00, 0xffd8e800 },
-    { "GPS",       0xff001758, 0xff98b0ff },
+    { "Notes",     0xff2a1800, 0xffffcc66 },  // 0 - default
+    { "Music",     0xff002b4a, 0xff55b4ff },  // 1
+    { "Web Radio", 0xff0a2800, 0xff2ef900 },  // 2
+    { "FM Radio",  0xff2c1e00, 0xffffaa00 },  // 3
+    { "AI Chat",   0xff4f0f21, 0xffff9b9d },  // 4
+    { "Games",     0xff3a0830, 0xffff7acd },  // 5
+    { "LoRa Chat", 0xff282b00, 0xffd8e800 },  // 6
+    { "GPS",       0xff001758, 0xff98b0ff },  // 7
+    { "Calendar",  0xff0a2800, 0xff2ef900 },  // 8
+    { "Remote",    0xff2b2b2b, 0xffffffff },  // 9
+    { "Settings",  0xff002c2d, 0xff03ffee },  // 10
 };
 
 // Label default X position and bounce offset
@@ -54,18 +63,30 @@ static constexpr int TONE_MS   = 20;
 // ============================================================
 
 void MainMenuApp::onCreate() {
+    loadScreen(SCREEN_ID_MAIN);
+
     // Map LVGL objects to icon array (matches APP_DEFS order)
-    _icons[0] = objects.main_image_app_setting;
-    _icons[1] = objects.main_image_app_ai;
-    _icons[2] = objects.main_image_app_fmradio;
-    _icons[3] = objects.main_image_app_webradio;
-    _icons[4] = objects.main_image_app_music;
+    _icons[0] = objects.main_image_app_notes;
+    _icons[1] = objects.main_image_app_music;
+    _icons[2] = objects.main_image_app_webradio;
+    _icons[3] = objects.main_image_app_fmradio;
+    _icons[4] = objects.main_image_app_ai;
     _icons[5] = objects.main_image_app_games;
     _icons[6] = objects.main_image_app_lorachat;
     _icons[7] = objects.main_image_app_gps;
+    _icons[8] = objects.main_image_app_calendar;
+    _icons[9] = objects.main_image_app_remote;
+    _icons[10] = objects.main_image_app_setting;
 
-    _selected_index = 2;
+    _selected_index = 0;
     _is_scrolling = false;
+
+    // Sync volume from config
+    _saved_volume = atoi(ConfigManager::getTone());
+    if (_saved_volume < 0) _saved_volume = 0;
+    if (_saved_volume > 255) _saved_volume = 255;
+    _muted = (_saved_volume == 0);
+    M5.Speaker.setVolume(_muted ? 0 : _saved_volume);
 
     setRestPositions();
     updateLabel();
@@ -105,11 +126,82 @@ void MainMenuApp::onUpdate() {
 
     // Update panel Y with spring bounce
     lv_obj_set_y(objects.main_panel_menu_selected, (int16_t)_panel_y.value());
+
+    // Update battery + status icons (BatteryManager throttles internally)
+    BatteryManager::update();
+    if (objects.main_bar_battery) {
+        lv_bar_set_value(objects.main_bar_battery, BatteryManager::getLevel(), LV_ANIM_OFF);
+    }
+    if (objects.main_label_battery) {
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%d%%", BatteryManager::getLevel());
+        lv_label_set_text(objects.main_label_battery, buf);
+    }
+    // Update WiFi state machine
+    WifiManager::update();
+
+    // Update time display
+    if (objects.main_label_time && TimeManager::isSynced()) {
+        lv_label_set_text(objects.main_label_time, TimeManager::getTimeHHMM().c_str());
+    }
+
+    // Update date display (e.g. "Tue 24 Mar")
+    if (objects.main_label_date && TimeManager::isSynced()) {
+        static const char* DAY_ABBR[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+        static const char* MON_ABBR[] = {"Jan","Feb","Mar","Apr","May","Jun",
+                                         "Jul","Aug","Sep","Oct","Nov","Dec"};
+        int d = TimeManager::getDay();
+        int w = TimeManager::getDayOfWeek();
+        int m = TimeManager::getMonth();
+        char dbuf[16];
+        snprintf(dbuf, sizeof(dbuf), "%s %d %s", DAY_ABBR[w], d, MON_ABBR[m - 1]);
+        lv_label_set_text(objects.main_label_date, dbuf);
+    }
+
+    // Update WiFi icon based on signal strength
+    if (objects.main_image_wifi) {
+        if (!WifiManager::isConnected()) {
+            lv_image_set_src(objects.main_image_wifi, &img_wifi_04);
+        } else {
+            const lv_img_dsc_t* wifi_icons[] = {
+                &img_wifi_00, &img_wifi_01, &img_wifi_02, &img_wifi_03
+            };
+            int level = WifiManager::getSignalLevel();
+            if (level < 0) level = 0;
+            if (level > 3) level = 3;
+            lv_image_set_src(objects.main_image_wifi, wifi_icons[level]);
+        }
+    }
+
+    updateStatusIcons();
+}
+
+void MainMenuApp::updateStatusIcons() {
+    // Tone icon: tone-00 = muted, tone-01 = unmuted
+    if (objects.main_image_tone) {
+        lv_image_set_src(objects.main_image_tone,
+                         _muted ? &img_tone_00 : &img_tone_01);
+    }
+    // SD card icon: sd-card-00 = unmounted, sd-card-01 = mounted
+    if (objects.main_image_sdcard) {
+        lv_image_set_src(objects.main_image_sdcard,
+                         SDManager::isMounted() ? &img_sd_card_01 : &img_sd_card_00);
+    }
 }
 
 void MainMenuApp::onDestroy() {
     _label_x.stop();
     _panel_y.stop();
+}
+
+// ============================================================
+// App targets
+// ============================================================
+
+void MainMenuApp::setAppTarget(int index, AppBase* app) {
+    if (index >= 0 && index < APP_COUNT) {
+        _app_targets[index] = app;
+    }
 }
 
 // ============================================================
@@ -122,12 +214,23 @@ void MainMenuApp::onKeyPressed(char key) {
     // Support common right/left variants: ',', '<' for left and '/', '.', '>' for right
     Serial.printf("[APP] onKeyPressed '%c' (0x%02X)\n", (key >= 32 && key < 127) ? key : '.', (uint8_t)key);
 
-    if (key == ',' || key == '<') {
+    if (key == ',' || key == '<' || key == '.') {
         scrollLeft();
-        M5.Speaker.tone(TONE_FREQ, TONE_MS);
-    } else if (key == '/' || key == '.' || key == '>') {
+        if (!_muted) M5.Speaker.tone(TONE_FREQ, TONE_MS);
+    } else if (key == '/' || key == ';' || key == '>') {
         scrollRight();
-        M5.Speaker.tone(TONE_FREQ, TONE_MS);
+        if (!_muted) M5.Speaker.tone(TONE_FREQ, TONE_MS);
+    } else if (key == '\n') {
+        // OK/Enter → launch selected app
+        if (!_muted) M5.Speaker.tone(TONE_FREQ, TONE_MS);
+        if (_app_targets[_selected_index]) {
+            _manager.switchApp(_app_targets[_selected_index]);
+        }
+    } else if (key == 'm' || key == 'M') {
+        // Toggle mute / restore last saved volume
+        _muted = !_muted;
+        M5.Speaker.setVolume(_muted ? 0 : (_saved_volume > 0 ? _saved_volume : 128));
+        updateStatusIcons();
     }
 }
 

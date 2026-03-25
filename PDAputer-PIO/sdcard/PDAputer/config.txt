@@ -1,0 +1,8 @@
+# PDAputer Configuration
+device_name = PDA
+wifi_ssid = wifi_ssid
+wifi_password = wifi_password
+timezone = AST-3
+tone = 94
+time_format = 12
+brightness = 94

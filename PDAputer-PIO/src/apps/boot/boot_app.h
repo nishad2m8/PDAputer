@@ -48,6 +48,7 @@ private:
 
     uint32_t _wait_start = 0;
     static constexpr uint32_t WAIT_DURATION_MS = 3000;
+    bool _sd_mount_attempted = false;
 
     char randomChar();
     void updateTypingName();

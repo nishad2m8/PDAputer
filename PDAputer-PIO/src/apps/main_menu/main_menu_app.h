@@ -24,6 +24,8 @@ class MainMenuApp : public AppBase {
 public:
     MainMenuApp(AppManager& manager) : _manager(manager) {}
 
+    void setAppTarget(int index, AppBase* app);
+
     void onCreate() override;
     void onUpdate() override;
     void onDestroy() override;
@@ -33,7 +35,8 @@ public:
 private:
     AppManager& _manager;
 
-    static const int APP_COUNT = 8;
+    static const int APP_COUNT = 11;
+    AppBase* _app_targets[APP_COUNT] = {};
 
     lv_obj_t* _icons[APP_COUNT];
     int _selected_index = 2;
@@ -57,4 +60,8 @@ private:
     void setRestPositions();
     void updateLabel();
     void updatePanelColor();
+    void updateStatusIcons();
+
+    bool _muted = false;
+    int  _saved_volume = 128;
 };

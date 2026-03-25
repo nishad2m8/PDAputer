@@ -3,6 +3,9 @@
 #include <lvgl.h>
 #include <Arduino.h>
 #include <M5Cardputer.h>
+#include "sd_manager.h"
+#include "config_manager.h"
+#include "wifi_manager.h"
 
 char BootApp::randomChar() {
     static const char chars[] = "abcdefghijklmnopqrstuvwxyz0123456789!@#$%&*";
@@ -122,6 +125,14 @@ void BootApp::updateFormingContribution() {
 }
 
 void BootApp::updateWaiting() {
+    // Mount SD card once at start of wait phase
+    if (!_sd_mount_attempted) {
+        _sd_mount_attempted = true;
+        SDManager::begin();
+        ConfigManager::load();
+        WifiManager::begin(); // Non-blocking, connects in background
+    }
+
     if (millis() - _wait_start >= WAIT_DURATION_MS) {
         loadScreen(SCREEN_ID_MAIN);
         if (_next_app) {
